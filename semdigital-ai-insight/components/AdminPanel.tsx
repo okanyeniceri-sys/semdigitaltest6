@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Users, Activity, Trash2, UserPlus, Shield, ShieldAlert, CheckCircle, Search, Briefcase, Globe, Facebook, Layout, Bot, Code, Copy, ExternalLink, FileJson, Settings } from 'lucide-react';
 import { User, ActivityLog, UserRole } from '../types';
@@ -61,191 +60,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ users, logs, onAddUser, onDelet
     // Otomatik URL Algılama
     const currentUrl = typeof window !== 'undefined' ? window.location.origin : "https://your-web-app-url.com";
 
-    return `// ===========================================================
-// 1. SETUP
-// ===========================================================
-
-function SETUP_API_KEY() {
-  var myKey = "BURAYA_API_ANAHTARINIZI_YAZIN"; 
-  PropertiesService.getScriptProperties().setProperty('GEMINI_API_KEY', myKey);
-  Logger.log("✅ API Key Saved.");
-}
-
-// ===========================================================
-// 2. HELPERS
-// ===========================================================
-
-// Web App URL'i otomatik olarak buraya gömülür
-var WEB_APP_URL = "${currentUrl}";
-
-function buildChatResponse(text, cardsV2) {
-  var message = { text: text || "" };
-  if (cardsV2 && cardsV2.length) message.cardsV2 = cardsV2;
-  return { hostAppDataAction: { chatDataAction: { createMessageAction: { message: message } } } };
-}
-
-// ===========================================================
-// 3. DATA SYNC (POST FROM WEB APP)
-// ===========================================================
-
-function doPost(e) {
-  try {
-    if (!e || !e.postData) return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'No data'}));
-    
-    var json = JSON.parse(e.postData.contents);
-    
-    // Construct Memory Context based on LCW data structure
-    var memoryText = "--- ACTIVE DATA CONTEXT (" + new Date().toLocaleString() + ") ---\\n";
-    memoryText += "Brand: " + (json.brandName || "Unknown") + "\\n";
-    
-    if (json.rawCampaignData) {
-        var d = json.rawCampaignData;
-        memoryText += "\\n[CAMPAIGN SUMMARY]:\\n";
-        memoryText += "Spend (Harcama): " + (d.spend || 0) + " TL\\n";
-        memoryText += "Revenue (Gelir): " + (d.conversionValue || d.revenue || 0) + " TL\\n";
-        
-        // Append RAW CSV if available (Critical for Top 10 questions)
-        if (d.csvContent) {
-           memoryText += "\\n[RAW CSV DATA (Top Campaigns for Analysis)]:\\n";
-           memoryText += d.csvContent;
-        }
-    }
-
-    // Safety: Truncate context
-    var report = (json.report || "");
-    if(report.length > 3000) report = report.substring(0, 3000) + "... [Truncated]";
-    
-    memoryText += "\\n[AI REPORT SUMMARY]:\\n" + report;
-    
-    PropertiesService.getScriptProperties().setProperty('ACTIVE_CONTEXT', memoryText);
-    return ContentService.createTextOutput(JSON.stringify({status: 'success', message: 'Context Updated'}));
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({status: 'error', message: error.toString()}));
-  }
-}
-
-// ===========================================================
-// 4. BOT LOGIC
-// ===========================================================
-
-function onMessage(event) {
-  var payload = (event && event.chat && event.chat.messagePayload && event.chat.messagePayload.message) ? event.chat.messagePayload.message : null;
-  var userMessage = "";
-
-  if (payload) {
-    if (payload.argumentText) userMessage = payload.argumentText.trim();
-    else if (payload.text) userMessage = payload.text.trim();
-  } else if (event && event.message && event.message.text) {
-    userMessage = event.message.text.trim();
-  }
-
-  if (!userMessage) return buildChatResponse("❓ Empty message.");
-
-  var geminiCevabi = getGeminiResponse(userMessage);
-
-  var card = {
-    cardId: "semdigital-response",
-    card: {
-      header: {
-        title: "🚀 SemDigital Asistan",
-        subtitle: "Performans Uzmanı",
-        imageUrl: "https://www.gstatic.com/images/branding/product/1x/google_analytics_48dp.png",
-        imageType: "CIRCLE"
-      },
-      sections: [{ widgets: [{ textParagraph: { text: geminiCevabi } }] }]
-    }
-  };
-
-  return buildChatResponse(null, [card]);
-}
-
-// ===========================================================
-// 5. GEMINI API (PERSONA)
-// ===========================================================
-
-function getGeminiResponse(userMessage) {
-  var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-  if (!apiKey) return "⚠️ API Key missing. Run SETUP_API_KEY.";
-  
-  var context = PropertiesService.getScriptProperties().getProperty('ACTIVE_CONTEXT');
-  if (!context) context = "NO DATA LOADED. Ask user to sync data from the Web App.";
-  
-  if(context.length > 60000) context = context.substring(0, 60000) + "... [Context Truncated]";
-
-  var url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey;
-  
-  // STRICT PROMPT - REFINED WITH REDIRECT LOGIC
-  var strictPrompt = \`### SYSTEM ROLE
-You are an expert SEM Digital Performance Assistant. You answer questions based ONLY on the provided CSV data in the context.
-
-### ⚠️ CRITICAL OUTPUT RULE: HIDDEN REASONING
-You must perform all data processing steps (Phase 1, 2, 3) **INTERNALLY**.
-**DO NOT** output text like "Phase 1", "Aşama 1", "Sütunları Yeniden Adlandırma", or "Hesaplama Adımları".
-The user must ONLY see the final, professional Turkish response.
-
-### ⚠️ REDIRECT RULE (WEB APP FALLBACK)
-If the user asks for:
-1. Granular details not present in the [RAW CSV DATA] (which is limited to top campaigns).
-2. Visualizations (charts, graphs).
-3. Complex filtering not possible here.
-
-THEN you must politely say:
-"Bu detaylı analiz veya görselleştirme için lütfen Web Uygulamasını ziyaret ediniz: " + WEB_APP_URL
-
-### INTERNAL LOGIC (EXECUTE SILENTLY)
-1. **Understand Columns:**
-   - 'platform' -> Channel (Mecra)
-   - 'device' -> Device (Cihaz)
-   - 'campaign' -> Campaign Name
-2. **Handle CSV Data:**
-   - The context contains a [RAW CSV DATA] section with top campaigns.
-   - If user asks for "Top 10 Clicks" or "Best ROAS", parse this CSV text mentally to find the answer.
-   - Do not say "Data is aggregated" if you see the CSV rows. Use those rows.
-3. **Calculate KPIs:**
-   - ROAS = Revenue / Spend
-   - CPC = Spend / Clicks
-
-### RESPONSE TEMPLATE
-- Start directly with the insight (e.g., "Analiz edilen verilere göre...").
-- Use bullet points and emojis for metrics (📊, 💰, 🚀).
-- Provide a clear, narrative summary.
-
-[WEB APP URL]: \` + WEB_APP_URL + \`
-[CONTEXT FROM WEB APP]:
-\` + context + \`
-
-[USER QUESTION]: \` + userMessage;
-
-  var payload = {
-    contents: [{ parts: [{ text: strictPrompt }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 800 } 
-  };
-  
-  var options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
-  
-  try {
-    var response = UrlFetchApp.fetch(url, options);
-    var json = JSON.parse(response.getContentText());
-    if (response.getResponseCode() !== 200) return "❌ Error: " + (json.error ? json.error.message : "Unknown");
-    if (json.candidates && json.candidates.length > 0) return json.candidates[0].content.parts[0].text;
-    return "⚠️ No response.";
-  } catch (error) {
-    return "⚠️ System Error: " + error.toString();
-  }
-}
-
-function testBot() {
-    console.log("Testing...");
-    var res = onMessage({message: {text: "En çok harcama yapan kampanya hangisi?"}});
-    console.log(JSON.stringify(res));
-}
-`;
-  };
+    return `// ===========================================================\n// 1. SETUP\n// ===========================================================\n\nfunction SETUP_API_KEY() {\n  var myKey = "BURAYA_API_ANAHTARINIZI_YAZIN"; \n  PropertiesService.getScriptProperties().setProperty('GEMINI_API_KEY', myKey);\n  Logger.log("✅ API Key Saved.");\n}\n\n// ===========================================================\n// 2. HELPERS\n// ===========================================================\n\n// Web App URL'i otomatik olarak buraya gömülür\nvar WEB_APP_URL = "${currentUrl}";\n\nfunction buildChatResponse(text, cardsV2) {\n  var message = { text: text || "" };\n  if (cardsV2 && cardsV2.length) message.cardsV2 = cardsV2;\n  return { hostAppDataAction: { chatDataAction: { createMessageAction: { message: message } } } };\n}\n\n// ===========================================================\n// 3. DATA SYNC (POST FROM WEB APP)\n// ===========================================================\n\nfunction doPost(e) {\n  try {\n    if (!e || !e.postData) return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'No data'}));\n    \n    var json = JSON.parse(e.postData.contents);\n    \n    // Construct Memory Context based on LCW data structure\n    var memoryText = "--- ACTIVE DATA CONTEXT (" + new Date().toLocaleString() + ") ---\n";\n    memoryText += "Brand: " + (json.brandName || "Unknown") + "\n";\n    \n    if (json.rawCampaignData) {\n        var d = json.rawCampaignData;\n        memoryText += "\n[CAMPAIGN SUMMARY]:\n";\n        memoryText += "Spend (Harcama): " + (d.spend || 0) + " TL\n";\n        memoryText += "Revenue (Gelir): " + (d.conversionValue || d.revenue || 0) + " TL\n";\n        \n        // Append RAW CSV if available (Critical for Top 10 questions)\n        if (d.csvContent) {\n           memoryText += "\n[RAW CSV DATA (Top Campaigns for Analysis)]:\n";\n           memoryText += d.csvContent;\n        }\n    }\n\n    // Safety: Truncate context\n    var report = (json.report || "");\n    if(report.length > 3000) report = report.substring(0, 3000) + "... [Truncated]";\n    \n    memoryText += "\n[AI REPORT SUMMARY]:\n" + report;\n    \n    PropertiesService.getScriptProperties().setProperty('ACTIVE_CONTEXT', memoryText);\n    return ContentService.createTextOutput(JSON.stringify({status: 'success', message: 'Context Updated'}));\n  } catch (error) {\n    return ContentService.createTextOutput(JSON.stringify({status: 'error', message: error.toString()}));\n  }\n}\n\n// ===========================================================\n// 4. BOT LOGIC\n// ===========================================================\n\nfunction onMessage(event) {\n  var payload = (event && event.chat && event.chat.messagePayload && event.chat.messagePayload.message) ? event.chat.messagePayload.message : null;\n  var userMessage = "";\n\n  if (payload) {\n    if (payload.argumentText) userMessage = payload.argumentText.trim();\n    else if (payload.text) userMessage = payload.text.trim();\n  } else if (event && event.message && event.message.text) {\n    userMessage = event.message.text.trim();\n  }\n\n  if (!userMessage) return buildChatResponse("❓ Empty message.");\n\n  var geminiCevabi = getGeminiResponse(userMessage);\n\n  var card = {\n    cardId: "semdigital-response",\n    card: {\n      header: {\n        title: "🚀 SemDigital Asistan",\n        subtitle: "Performans Uzmanı",\n        imageUrl: "https://www.gstatic.com/images/branding/product/1x/google_analytics_48dp.png",\n        imageType: "CIRCLE"\n      },\n      sections: [{ widgets: [{ textParagraph: { text: geminiCevabi } }] }]\n    }\n  };\n\n  return buildChatResponse(null, [card]);\n}\n\n// ===========================================================\n// 5. GEMINI API (PERSONA)\n// ===========================================================\n\nfunction getGeminiResponse(userMessage) {\n  var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');\n  if (!apiKey) return "⚠️ API Key missing. Run SETUP_API_KEY.";\n  \n  var context = PropertiesService.getScriptProperties().getProperty('ACTIVE_CONTEXT');\n  if (!context) context = "NO DATA LOADED. Ask user to sync data from the Web App.";\n  \n  if(context.length > 60000) context = context.substring(0, 60000) + "... [Context Truncated]";\n\n  var url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey;\n  \n  // STRICT PROMPT - REFINED WITH REDIRECT LOGIC\n  var strictPrompt = `### SYSTEM ROLE\nYou are an expert SEM Digital Performance Assistant. You answer questions based ONLY on the provided CSV data in the context.\n\n### ⚠️ CRITICAL OUTPUT RULE: HIDDEN REASONING\nYou must perform all data processing steps (Phase 1, 2, 3) **INTERNALLY**.\n**DO NOT** output text like "Phase 1", "Aşama 1", "Sütunları Yeniden Adlandırma", or "Hesaplama Adımları".\nThe user must ONLY see the final, professional Turkish response.\n\n### ⚠️ REDIRECT RULE (WEB APP FALLBACK)\nIf the user asks for:\n1. Granular details not present in the [RAW CSV DATA] (which is limited to top campaigns).\n2. Visualizations (charts, graphs).\n3. Complex filtering not possible here.\n\nTHEN you must politely say:\n"Bu detaylı analiz veya görselleştirme için lütfen Web Uygulamasını ziyaret ediniz: " + WEB_APP_URL\n\n### INTERNAL LOGIC (EXECUTE SILENTLY)\n1. **Understand Columns:**\n   - 'platform' -> Channel (Mecra)\n   - 'device' -> Device (Cihaz)\n   - 'campaign' -> Campaign Name\n2. **Handle CSV Data:**\n   - The context contains a [RAW CSV DATA] section with top campaigns.\n   - If user asks for "Top 10 Clicks" or "Best ROAS", parse this CSV text mentally to find the answer.\n   - Do not say "Data is aggregated" if you see the CSV rows. Use those rows.\n3. **Calculate KPIs:**\n   - ROAS = Revenue / Spend\n   - CPC = Spend / Clicks\n\n### RESPONSE TEMPLATE\n- Start directly with the insight (e.g., "Analiz edilen verilere göre...").\n- Use bullet points and emojis for metrics (📊, 💰, 🚀).\n- Provide a clear, narrative summary.\n\n[WEB APP URL]: ` + WEB_APP_URL + `\n[CONTEXT FROM WEB APP]:\n` + context + `\n[USER QUESTION]: ` + userMessage;\n\n  var payload = {\n    contents: [{ parts: [{ text: strictPrompt }] }],\n    generationConfig: { temperature: 0.2, maxOutputTokens: 800 } \n  };\n  \n  var options = {\n    method: 'post',\n    contentType: 'application/json',\n    payload: JSON.stringify(payload),\n    muteHttpExceptions: true\n  };\n  \n  try {\n    var response = UrlFetchApp.fetch(url, options);\n    var json = JSON.parse(response.getContentText());\n    if (response.getResponseCode() !== 200) return "❌ Error: " + (json.error ? json.error.message : "Unknown");\n    if (json.candidates && json.candidates.length > 0) return json.candidates[0].content.parts[0].text;\n    return "⚠️ No response.";\n  } catch (error) {\n    return "⚠️ System Error: " + error.toString();\n  }\n}\n\nfunction testBot() {\n    console.log("Testing...");\n    var res = onMessage({message: {text: "En çok harcama yapan kampanya hangisi?"}});\n    console.log(JSON.stringify(res));\n}\n`;\n  };
 
   const generateManifestCode = () => {
     return `{
@@ -351,7 +166,7 @@ function testBot() {
                         </td>
                         <td className="px-4 py-3 text-slate-600">{user.email}</td>
                         <td className="px-4 py-3">
-                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold border ${roleInfo.color}`}>
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold border ${roleInfo.color}`}> 
                             <RoleIcon size={10} /> {roleInfo.label}
                             </span>
                         </td>
@@ -480,7 +295,7 @@ function testBot() {
                         log.action === 'LOGOUT' ? 'bg-gray-100 text-gray-700' :
                         log.action === 'ADMIN_ACTION' ? 'bg-red-100 text-red-700' :
                         'bg-blue-100 text-blue-700'
-                      }`}>
+                      }`}> 
                         {log.action}
                       </span>
                     </td>
@@ -546,7 +361,6 @@ function testBot() {
                 {/* Instructions */}
                 <div className="space-y-6">
                     <h4 className="font-bold text-slate-800 border-b border-slate-100 pb-2">Kurulum Adımları</h4>
-                    
                     <div className="space-y-4 max-h-[450px] overflow-y-auto pr-2">
                         <div className="flex gap-3">
                             <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-sm font-bold shrink-0">1</span>
